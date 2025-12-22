@@ -6,7 +6,8 @@ select in the UI. Each preset is optimized for different trading objectives
 such as maximizing profit factor, win rate, or minimizing drawdown.
 
 Presets are designed based on a long/short mean-reversion strategy using
-Bollinger Bands, Keltner Channels, and RSI indicators.
+Bollinger Bands, Keltner Channels, and RSI indicators. Trade direction is
+configurable in the UI/config; presets provide defaults that can be overridden.
 """
 
 from typing import TypedDict, Optional, Literal, Dict
@@ -78,8 +79,8 @@ class StrategyPreset(TypedDict, total=False):
 # =============================================================================
 
 DEFAULT_PRESET: StrategyPreset = {
-    "name": "Balanced Default (Long/Short 50/50)",
-    "description": "Direction: Long/Short blend (50% long / 50% short). Balanced mean-reversion baseline with mid exits and fixed stops for steadier trade frequency.",
+    "name": "Balanced Default (Neutral Blend)",
+    "description": "Balanced mean-reversion baseline with mid exits and fixed stops for steadier trade frequency.",
     "category": "balanced",
 
     # Bollinger Bands
@@ -143,8 +144,8 @@ STRATEGY_PRESETS: Dict[str, StrategyPreset] = {
     # -------------------------------------------------------------------------
     
     "conservative": {
-        "name": "Conservative (Short-only)",
-        "description": "Direction: Short-only (100% short). High win rate with tight risk controls. Requires strong signals (both bands + high RSI). Best for capital preservation.",
+        "name": "Conservative (Strict Entries)",
+        "description": "High win rate with tight risk controls. Requires strong signals (both bands + high RSI). Best for capital preservation.",
         "category": "conservative",
         
         # Indicators (standard)
@@ -190,8 +191,8 @@ STRATEGY_PRESETS: Dict[str, StrategyPreset] = {
     },
 
     "low_drawdown": {
-        "name": "Low Drawdown (Short-only)",
-        "description": "Direction: Short-only (100% short). Minimizes maximum drawdown with very conservative entries and strict daily limits. Sacrifices returns for stability.",
+        "name": "Low Drawdown (Strict Limits)",
+        "description": "Minimizes maximum drawdown with conservative entries and strict daily limits. Sacrifices returns for stability.",
         "category": "conservative",
         
         "bb_len": 20,
@@ -237,8 +238,8 @@ STRATEGY_PRESETS: Dict[str, StrategyPreset] = {
     # -------------------------------------------------------------------------
     
     "aggressive": {
-        "name": "Aggressive (Short-only)",
-        "description": "Direction: Short-only (100% short). Higher profit factor with larger position sizing and wider stops. More trades, accepts lower win rate for bigger winners.",
+        "name": "Aggressive (Loose Filters)",
+        "description": "Higher profit factor with larger position sizing and wider stops. More trades, accepts lower win rate for bigger winners.",
         "category": "aggressive",
         
         "bb_len": 20,
@@ -280,8 +281,8 @@ STRATEGY_PRESETS: Dict[str, StrategyPreset] = {
     },
 
     "high_profit_factor": {
-        "name": "High Profit Factor (Short-only)",
-        "description": "Direction: Short-only (100% short). Optimized specifically for maximum profit factor. Uses ATR stops and trailing to let winners run while cutting losers.",
+        "name": "High Profit Factor (Trailing Focus)",
+        "description": "Optimized for maximum profit factor. Uses ATR stops and trailing to let winners run while cutting losers.",
         "category": "aggressive",
         
         "bb_len": 20,
@@ -327,8 +328,8 @@ STRATEGY_PRESETS: Dict[str, StrategyPreset] = {
     # -------------------------------------------------------------------------
 
     "directional_short_only": {
-        "name": "Directional Short Only (100% short)",
-        "description": "Direction: Short-only (100% short). Short-only mean reversion using overbought signals. Mirrors the legacy short strategy.",
+        "name": "Directional Baseline (Short Default)",
+        "description": "Baseline mean reversion using overbought/oversold signals. Mirrors the legacy directional setup.",
         "category": "balanced",
 
         "bb_len": 20,
@@ -372,8 +373,8 @@ STRATEGY_PRESETS: Dict[str, StrategyPreset] = {
     },
 
     "directional_long_only": {
-        "name": "Directional Long Only (100% long)",
-        "description": "Direction: Long-only (100% long). Long-only mean reversion using oversold signals. Mirrors the short setup with long entries.",
+        "name": "Directional Baseline (Long Default)",
+        "description": "Baseline mean reversion using oversold/overbought signals with the same risk profile as the short default.",
         "category": "balanced",
 
         "bb_len": 20,
@@ -417,8 +418,8 @@ STRATEGY_PRESETS: Dict[str, StrategyPreset] = {
     },
 
     "directional_blend_balanced": {
-        "name": "Directional Blend (Balanced 50/50)",
-        "description": "Direction: Long/Short blend (50% long / 50% short). Balanced long/short blend with symmetric RSI thresholds.",
+        "name": "Directional Blend (Neutral Bias)",
+        "description": "Balanced long/short blend with symmetric RSI thresholds.",
         "category": "balanced",
 
         "bb_len": 20,
@@ -462,8 +463,8 @@ STRATEGY_PRESETS: Dict[str, StrategyPreset] = {
     },
 
     "directional_blend_long_bias": {
-        "name": "Directional Blend (Long Bias 60/40)",
-        "description": "Direction: Long bias (60% long / 40% short). Long/short blend with looser long thresholds and stricter short thresholds.",
+        "name": "Directional Blend (Long Bias)",
+        "description": "Long bias with looser long thresholds and stricter short thresholds.",
         "category": "balanced",
 
         "bb_len": 20,
@@ -507,8 +508,8 @@ STRATEGY_PRESETS: Dict[str, StrategyPreset] = {
     },
 
     "directional_blend_short_bias": {
-        "name": "Directional Blend (Short Bias 60/40)",
-        "description": "Direction: Short bias (60% short / 40% long). Long/short blend with looser short thresholds and stricter long thresholds.",
+        "name": "Directional Blend (Short Bias)",
+        "description": "Short bias with looser short thresholds and stricter long thresholds.",
         "category": "balanced",
 
         "bb_len": 20,
@@ -556,8 +557,8 @@ STRATEGY_PRESETS: Dict[str, StrategyPreset] = {
     # -------------------------------------------------------------------------
     
     "scalping": {
-        "name": "Scalping (Short-only)",
-        "description": "Direction: Short-only (100% short). Quick in-and-out trades targeting small moves. Tight stops, short holding period, exits at mid band. High frequency.",
+        "name": "Scalping (Fast Reversion)",
+        "description": "Quick in-and-out trades targeting small moves. Tight stops, short holding period, exits at mid band. High frequency.",
         "category": "specialized",
         
         "bb_len": 15,  # Shorter period = more responsive
@@ -599,8 +600,8 @@ STRATEGY_PRESETS: Dict[str, StrategyPreset] = {
     },
 
     "swing": {
-        "name": "Swing Trading (Short-only)",
-        "description": "Direction: Short-only (100% short). Longer-term trades targeting larger moves. Wider stops, longer holding period, exits at lower band. Fewer but bigger trades.",
+        "name": "Swing Trading (Slow Reversion)",
+        "description": "Longer-term trades targeting larger moves. Wider stops, longer holding period, exits at lower band. Fewer but bigger trades.",
         "category": "specialized",
         
         "bb_len": 25,  # Longer period = smoother
@@ -642,8 +643,8 @@ STRATEGY_PRESETS: Dict[str, StrategyPreset] = {
     },
 
     "momentum_burst": {
-        "name": "Momentum Burst (Short-only)",
-        "description": "Direction: Short-only (100% short). Catches extreme overbought conditions with very high RSI requirements. Fewer trades but high-probability setups.",
+        "name": "Momentum Burst (Extreme RSI)",
+        "description": "Catches extreme RSI conditions with very high requirements. Fewer trades but high-conviction setups.",
         "category": "specialized",
         
         "bb_len": 20,
@@ -685,8 +686,8 @@ STRATEGY_PRESETS: Dict[str, StrategyPreset] = {
     },
 
     "mean_reversion": {
-        "name": "Mean Reversion Classic (Short-only)",
-        "description": "Direction: Short-only (100% short). Classic mean reversion setup using standard BB parameters. No trailing stop, relies on price returning to mean.",
+        "name": "Mean Reversion Classic",
+        "description": "Classic mean reversion setup using standard BB parameters. No trailing stop, relies on price returning to mean.",
         "category": "balanced",
         
         "bb_len": 20,
