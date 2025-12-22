@@ -788,6 +788,36 @@ def merge_with_defaults(preset: StrategyPreset) -> StrategyPreset:
     return merged
 
 
+def _mirror_rsi(value: Optional[float]) -> Optional[int]:
+    if value is None:
+        return None
+    mirrored = 100.0 - float(value)
+    mirrored = max(0.0, min(100.0, mirrored))
+    return int(round(mirrored))
+
+
+def apply_preset_direction(
+    preset: StrategyPreset,
+    direction: Optional[str] = None,
+) -> StrategyPreset:
+    """
+    Return a copy of the preset with long/short RSI thresholds filled in and an
+    optional trade direction override applied.
+    """
+    if not preset:
+        return {}
+
+    resolved = dict(preset)
+    if resolved.get("rsi_max") is None:
+        resolved["rsi_max"] = _mirror_rsi(resolved.get("rsi_min"))
+    if resolved.get("rsi_ma_max") is None:
+        resolved["rsi_ma_max"] = _mirror_rsi(resolved.get("rsi_ma_min"))
+    if direction in {"Short", "Long", "Both"}:
+        resolved["trade_direction"] = direction
+
+    return resolved
+
+
 def preset_to_params(preset: StrategyPreset) -> dict:
     """
     Convert a preset to parameter dictionary for the backtest engine.
