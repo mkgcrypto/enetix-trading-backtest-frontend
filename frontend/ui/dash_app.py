@@ -1,7 +1,9 @@
 import datetime as dt
 import io
 import json
+import logging
 import os
+import sys
 from typing import Any, Dict, List, Optional, Tuple
 
 import pandas as pd
@@ -45,6 +47,15 @@ INLINE_OPTION_STYLE = {
 }
 
 
+def _configure_logging() -> None:
+    logger = logging.getLogger("werkzeug")
+    logger.setLevel(logging.INFO)
+    handler = logging.StreamHandler(sys.stdout)
+    handler.setFormatter(logging.Formatter("%(message)s"))
+    logger.handlers = [handler]
+    logger.propagate = False
+
+
 def _to_checklist(flag: bool) -> List[str]:
     return [CHECK_ON] if flag else []
 
@@ -76,6 +87,56 @@ def _safe_float(value: Any, default: float) -> float:
         return float(value)
     except (TypeError, ValueError):
         return default
+
+
+def _parse_ts(value: Any) -> Optional[dt.datetime]:
+    if value is None or value == "":
+        return None
+    if isinstance(value, dt.datetime):
+        return value
+    try:
+        return dt.datetime.fromisoformat(str(value))
+    except ValueError:
+        return None
+
+
+def _heartbeat_age_seconds(value: Optional[str]) -> Optional[float]:
+    ts = _parse_ts(value)
+    if ts is None:
+        return None
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=dt.UTC)
+    now = dt.datetime.now(dt.UTC)
+    return max(0.0, (now - ts).total_seconds())
+
+
+def _format_age(seconds: Optional[float]) -> str:
+    if seconds is None:
+        return ""
+    if seconds < 60:
+        return f"{int(seconds)}s"
+    if seconds < 3600:
+        minutes = int(seconds // 60)
+        return f"{minutes}m {int(seconds % 60)}s"
+    if seconds < 86400:
+        hours = int(seconds // 3600)
+        minutes = int((seconds % 3600) // 60)
+        return f"{hours}h {minutes}m"
+    days = int(seconds // 86400)
+    hours = int((seconds % 86400) // 3600)
+    return f"{days}d {hours}h"
+
+
+def _worker_stale_seconds() -> float:
+    return _safe_float(os.getenv("WORKER_STALE_SECONDS"), 900.0)
+
+
+def _worker_status(heartbeat_at: Optional[str]) -> tuple[str, str]:
+    age_seconds = _heartbeat_age_seconds(heartbeat_at)
+    if age_seconds is None:
+        return "unknown", ""
+    status = "active" if age_seconds <= _worker_stale_seconds() else "stale"
+    return status, _format_age(age_seconds)
 
 
 def _resolve_preset_direction(value: Optional[str]) -> Optional[str]:
@@ -118,6 +179,23 @@ def _build_preset_info(preset: Dict[str, Any], direction_override: Optional[str]
         info_parts.append(margin)
 
     return " | ".join(info_parts)
+
+
+def _format_preset_recommendation(preset: Dict[str, Any]) -> Optional[str]:
+    if not preset:
+        return None
+    timeframe = preset.get("recommended_timeframe")
+    lookback_days = preset.get("recommended_lookback_days")
+    parts = []
+    if timeframe:
+        parts.append(f"{timeframe} candles")
+    if lookback_days:
+        preset_key = _preset_key_for_lookback(int(lookback_days))
+        label = DATE_PRESET_LABELS.get(preset_key, f"{int(lookback_days)}D")
+        parts.append(f"{label} lookback")
+    if not parts:
+        return None
+    return "Recommended data: " + " · ".join(parts)
 
 
 def _date_range_from_preset(preset: str, anchor_date: dt.date) -> Optional[Tuple[dt.date, dt.date]]:
@@ -350,7 +428,7 @@ BB_BASIS_OPTIONS = ["sma", "ema"]
 RSI_SMOOTHING_OPTIONS = ["ema", "sma", "rma"]
 RSI_MA_OPTIONS = ["sma", "ema"]
 RSI_RELATION_OPTIONS = [">=", ">", "<=", "<"]
-ENTRY_BAND_OPTIONS = ["Either", "KC", "BB", "Both"]
+ENTRY_BAND_OPTIONS = ["Either", "KC", "BB", "Both", "Squeeze"]
 EXIT_CHANNEL_OPTIONS = ["BB", "KC"]
 EXIT_LEVEL_OPTIONS = ["mid", "lower"]
 TRADE_DIRECTION_OPTIONS = [
@@ -372,6 +450,7 @@ PRESET_DIRECTION_OPTIONS = [
     {"label": "Long only", "value": "Long"},
     {"label": "Long + Short (Blend)", "value": "Both"},
 ]
+DATA_SCOPE_KEYS = {"w_exchange", "w_symbol", "w_timeframe", "w_start_date", "w_end_date"}
 
 app = Dash(__name__)
 app.title = "BB + KC + RSI Backtester"
@@ -452,6 +531,24 @@ app.layout = html.Div(
                             clearable=False,
                         ),
                         html.Div(id="preset-info", style={"marginTop": "6px", "fontSize": "12px"}),
+                        html.Div(
+                            "Presets only change strategy settings. Data & timeframe stay as-is.",
+                            className="helper-text",
+                        ),
+                        html.Div(
+                            [
+                                html.Div(id="preset-reco-text", className="preset-reco-text"),
+                                html.Button(
+                                    "Apply Recommended Data",
+                                    id="apply-preset-data",
+                                    n_clicks=0,
+                                    className="btn-secondary",
+                                ),
+                            ],
+                            id="preset-reco",
+                            className="preset-reco",
+                            style={"display": "none"},
+                        ),
                         html.Hr(),
                         html.Details(
                             [
@@ -476,14 +573,14 @@ app.layout = html.Div(
                                     value=DEFAULTS["w_timeframe"],
                                     labelStyle=INLINE_OPTION_STYLE,
                                 ),
-                                html.Label("Date presets"),
+                                html.Label("Lookback window"),
                                 dcc.RadioItems(
                                     id="w_date_preset",
                                     options=DATE_PRESET_OPTIONS,
-                                    value="manual",
+                                    value=DEFAULTS["w_date_preset"],
                                     labelStyle=INLINE_OPTION_STYLE,
                                 ),
-                                html.Label("Date range (UTC)"),
+                                html.Label("Custom range (UTC)"),
                                 dcc.DatePickerRange(
                                     id="w_date_range",
                                     start_date=DEFAULTS["w_start_date"],
@@ -1134,6 +1231,16 @@ app.layout = html.Div(
                                                             style={"display": "flex", "gap": "12px", "alignItems": "center", "flexWrap": "wrap"},
                                                         ),
                                                         html.Div(id="jobs-status", style={"margin": "8px 0"}),
+                                                        html.H5("Workers"),
+                                                        html.Div(id="workers-summary", style={"margin": "8px 0"}),
+                                                        dash_table.DataTable(
+                                                            id="workers-table",
+                                                            data=[],
+                                                            columns=[],
+                                                            page_size=8,
+                                                            sort_action="native",
+                                                            style_table={"overflowX": "auto"},
+                                                        ),
                                                         dash_table.DataTable(
                                                             id="jobs-table",
                                                             data=[],
@@ -1237,6 +1344,9 @@ INPUT_FIELDS = [
     {"id": "w_max_margin_utilization", "prop": "value", "key": "w_max_margin_utilization"},
 ]
 
+# Filtered list excluding data scope fields for sync_inputs_from_preset callback
+STRATEGY_INPUT_FIELDS = [field for field in INPUT_FIELDS if field["key"] not in DATA_SCOPE_KEYS]
+
 
 def _values_from_args(values: List[Any]) -> Dict[str, Any]:
     return {field["key"]: value for field, value in zip(INPUT_FIELDS, values)}
@@ -1257,12 +1367,13 @@ app.clientside_callback(
 
 
 @app.callback(
-    [Output(field["id"], field["prop"]) for field in INPUT_FIELDS]
+    [Output(field["id"], field["prop"]) for field in STRATEGY_INPUT_FIELDS]
     + [Output("preset-info", "children"), Output("preset_selector", "value")],
     [Input("preset_selector", "value"), Input("store-load-strategy", "data"), Input("preset_direction", "value")],
     prevent_initial_call=True,
 )
 def sync_inputs_from_preset(preset_value, loaded_strategy, preset_direction):
+    """Sync strategy parameters (excluding data scope fields) from preset selection."""
     if not callback_context.triggered:
         raise PreventUpdate
 
@@ -1270,46 +1381,130 @@ def sync_inputs_from_preset(preset_value, loaded_strategy, preset_direction):
     if trigger_id == "store-load-strategy" and loaded_strategy:
         resolved = apply_preset_direction(loaded_strategy)
         ui_values = _preset_to_ui_values(resolved)
-        output_values = [ui_values.get(field["key"]) for field in INPUT_FIELDS]
+        output_values = [ui_values.get(field["key"]) for field in STRATEGY_INPUT_FIELDS]
         info = "Loaded strategy parameters."
         return output_values + [info, "Custom"]
 
     if preset_value == "Custom":
         info = "Custom (Manual Configuration)"
-        return [no_update] * len(INPUT_FIELDS) + [info, no_update]
+        return [no_update] * len(STRATEGY_INPUT_FIELDS) + [info, no_update]
 
     preset = STRATEGY_PRESETS.get(preset_value)
     if not preset:
-        return [no_update] * len(INPUT_FIELDS) + [no_update, no_update]
+        return [no_update] * len(STRATEGY_INPUT_FIELDS) + [no_update, no_update]
 
     direction_override = _resolve_preset_direction(preset_direction)
     resolved = apply_preset_direction(preset, direction_override)
     ui_values = _preset_to_ui_values(resolved)
-    output_values = [ui_values.get(field["key"]) for field in INPUT_FIELDS]
+    output_values = [ui_values.get(field["key"]) for field in STRATEGY_INPUT_FIELDS]
     info = _build_preset_info(resolved, direction_override)
     return output_values + [info, preset_value]
 
 
 @app.callback(
+    [Output("preset-reco", "style"), Output("preset-reco-text", "children"), Output("apply-preset-data", "disabled")],
+    Input("preset_selector", "value"),
+)
+def update_preset_recommendation(preset_value):
+    if not preset_value or preset_value == "Custom":
+        return {"display": "none"}, "", True
+
+    preset = STRATEGY_PRESETS.get(preset_value)
+    if not preset:
+        return {"display": "none"}, "", True
+
+    text = _format_preset_recommendation(preset)
+    if not text:
+        return {"display": "none"}, "", True
+
+    return {"display": "flex"}, text, False
+
+
+@app.callback(
     [
-        Output("w_date_range", "start_date", allow_duplicate=True),
-        Output("w_date_range", "end_date", allow_duplicate=True),
+        Output("w_timeframe", "value"),
+        Output("w_date_preset", "value"),
+        Output("w_date_range", "start_date"),
+        Output("w_date_range", "end_date"),
     ],
-    Input("w_date_preset", "value"),
-    State("w_date_range", "end_date"),
+    [
+        Input("apply-preset-data", "n_clicks"),
+        Input("w_date_preset", "value"),
+        Input("w_date_range", "end_date"),
+    ],
+    [
+        State("preset_selector", "value"),
+        State("w_timeframe", "value"),
+        State("w_date_preset", "value"),
+    ],
     prevent_initial_call=True,
 )
-def apply_date_preset(preset_value, current_end):
-    if not preset_value or preset_value == "manual":
+def manage_data_scope_fields(apply_clicks, date_preset_input, end_date_input, preset_value, current_timeframe, current_date_preset):
+    """Consolidated callback to manage w_timeframe, w_date_preset, and w_date_range fields."""
+    if not callback_context.triggered:
         raise PreventUpdate
 
-    anchor_date = _parse_date(current_end) or dt.datetime.now(dt.UTC).date()
-    resolved = _date_range_from_preset(preset_value, anchor_date)
-    if not resolved:
-        raise PreventUpdate
+    trigger_id = callback_context.triggered[0]["prop_id"].split(".")[0]
 
-    start_date, end_date = resolved
-    return start_date, end_date
+    # Handle "Apply Recommended Data Scope" button click
+    if trigger_id == "apply-preset-data":
+        if not apply_clicks or not preset_value or preset_value == "Custom":
+            raise PreventUpdate
+
+        preset = STRATEGY_PRESETS.get(preset_value)
+        if not preset:
+            raise PreventUpdate
+
+        timeframe = preset.get("recommended_timeframe")
+        lookback_days = preset.get("recommended_lookback_days")
+        if not timeframe and not lookback_days:
+            raise PreventUpdate
+
+        date_preset = _preset_key_for_lookback(int(lookback_days)) if lookback_days else None
+        end_date = dt.datetime.now(dt.UTC).date()
+
+        # Calculate start_date based on date_preset
+        start_date = no_update
+        if date_preset:
+            anchor_date = end_date
+            resolved = _date_range_from_preset(date_preset, anchor_date)
+            if resolved:
+                start_date, _ = resolved
+
+        return (
+            timeframe or no_update,
+            date_preset or no_update,
+            start_date,
+            end_date if date_preset else no_update,
+        )
+
+    # Handle date preset changes (recalculate start_date)
+    if trigger_id == "w_date_preset":
+        if not date_preset_input or date_preset_input == "manual":
+            raise PreventUpdate
+
+        anchor_date = _parse_date(end_date_input) or dt.datetime.now(dt.UTC).date()
+        resolved = _date_range_from_preset(date_preset_input, anchor_date)
+        if not resolved:
+            raise PreventUpdate
+
+        start_date, _ = resolved
+        return no_update, no_update, start_date, no_update
+
+    # Handle end_date changes (recalculate start_date if preset is active)
+    if trigger_id == "w_date_range":
+        if not current_date_preset or current_date_preset == "manual":
+            raise PreventUpdate
+
+        anchor_date = _parse_date(end_date_input) or dt.datetime.now(dt.UTC).date()
+        resolved = _date_range_from_preset(current_date_preset, anchor_date)
+        if not resolved:
+            raise PreventUpdate
+
+        start_date, _ = resolved
+        return no_update, no_update, start_date, no_update
+
+    raise PreventUpdate
 
 
 @app.callback(
@@ -2318,6 +2513,82 @@ def refresh_job_queue(tab_value, _refresh_clicks, _tick, status_filter, type_fil
 
 
 @app.callback(
+    [Output("workers-summary", "children"), Output("workers-table", "data"), Output("workers-table", "columns")],
+    [
+        Input("store-job-queue", "data"),
+        Input("jobs-status-filter", "value"),
+        Input("jobs-type-filter", "value"),
+    ],
+)
+def render_workers_table(jobs, status_filter, type_filter):
+    if not jobs:
+        return "No workers in current view.", [], []
+
+    worker_map: Dict[str, Dict[str, Any]] = {}
+    for j in jobs:
+        worker_id = j.get("worker_id") or ""
+        if not worker_id:
+            continue
+        info = worker_map.setdefault(
+            worker_id,
+            {
+                "worker_id": worker_id,
+                "running_jobs": 0,
+                "last_job_id": None,
+                "last_heartbeat_raw": "",
+                "last_heartbeat": None,
+            },
+        )
+        if str(j.get("status") or "") == "running":
+            info["running_jobs"] += 1
+
+        heartbeat_at = j.get("heartbeat_at")
+        parsed = _parse_ts(heartbeat_at)
+        if parsed and (info["last_heartbeat"] is None or parsed > info["last_heartbeat"]):
+            info["last_heartbeat"] = parsed
+            info["last_heartbeat_raw"] = heartbeat_at
+            info["last_job_id"] = j.get("id")
+
+    if not worker_map:
+        return "No workers in current view.", [], []
+
+    rows = []
+    active = 0
+    stale = 0
+    unknown = 0
+    for worker_id in sorted(worker_map.keys()):
+        info = worker_map[worker_id]
+        status, age = _worker_status(info.get("last_heartbeat_raw"))
+        if status == "active":
+            active += 1
+        elif status == "stale":
+            stale += 1
+        else:
+            unknown += 1
+        rows.append(
+            {
+                "Worker": worker_id,
+                "Status": status,
+                "Running Jobs": info.get("running_jobs", 0),
+                "Last Job": info.get("last_job_id") or "",
+                "Last Heartbeat": info.get("last_heartbeat_raw") or "",
+                "Heartbeat Age": age,
+            }
+        )
+
+    filter_bits = []
+    if status_filter not in (None, "", "all"):
+        filter_bits.append(f"status={status_filter}")
+    if type_filter not in (None, "", "all"):
+        filter_bits.append(f"type={type_filter}")
+    filter_note = f" (filter: {', '.join(filter_bits)})" if filter_bits else ""
+    summary = f"Workers: {len(rows)} | active={active} stale={stale} unknown={unknown}{filter_note}"
+
+    columns = [{"name": c, "id": c} for c in rows[0].keys()] if rows else []
+    return summary, rows, columns
+
+
+@app.callback(
     [Output("jobs-table", "data"), Output("jobs-table", "columns")],
     Input("store-job-queue", "data"),
 )
@@ -2330,6 +2601,8 @@ def render_jobs_table(jobs):
         cur = int(j.get("progress_current") or 0)
         total = int(j.get("progress_total") or 0)
         progress = f"{cur}/{total}" if total else (str(cur) if cur else "")
+        attempts = int(j.get("attempts") or 0)
+        worker_status, heartbeat_age = _worker_status(j.get("heartbeat_at"))
         rows.append(
             {
                 "ID": int(j.get("id") or 0),
@@ -2340,6 +2613,9 @@ def render_jobs_table(jobs):
                 "Started": j.get("started_at") or "",
                 "Finished": j.get("finished_at") or "",
                 "Worker": j.get("worker_id") or "",
+                "Worker Status": worker_status,
+                "Heartbeat Age": heartbeat_age,
+                "Attempts": attempts,
                 "Progress": progress,
                 "Message": j.get("progress_message") or "",
             }
@@ -2416,16 +2692,20 @@ def render_job_detail(tab_value, job, events):
     status = job.get("status")
     job_type = job.get("job_type")
     worker_id = job.get("worker_id") or ""
+    heartbeat_at = job.get("heartbeat_at") or ""
+    attempts = int(job.get("attempts") or 0)
     created_at = job.get("created_at") or ""
     started_at = job.get("started_at") or ""
     finished_at = job.get("finished_at") or ""
     progress_current = int(job.get("progress_current") or 0)
     progress_total = int(job.get("progress_total") or 0)
     progress_message = job.get("progress_message") or ""
+    worker_status, heartbeat_age = _worker_status(heartbeat_at)
 
     summary = (
         f"Job #{job_id} — {job_type} — {status} | "
-        f"worker={worker_id or 'n/a'} | "
+        f"worker={worker_id or 'n/a'} status={worker_status} attempts={attempts} "
+        f"heartbeat={heartbeat_at or 'n/a'} age={heartbeat_age or 'n/a'} | "
         f"created={created_at} started={started_at} finished={finished_at} | "
         f"progress={progress_current}/{progress_total} {progress_message}"
     )
@@ -2454,6 +2734,7 @@ def render_job_detail(tab_value, job, events):
 
 
 def main() -> None:
+    _configure_logging()
     port = int(os.environ.get("PORT", 8050))
     app.run_server(host="0.0.0.0", port=port, debug=False)
 

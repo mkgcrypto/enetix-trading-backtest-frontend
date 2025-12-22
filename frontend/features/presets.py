@@ -24,6 +24,10 @@ class StrategyPreset(TypedDict, total=False):
     name: str
     description: str
     category: Literal["conservative", "aggressive", "balanced", "specialized"]
+
+    # Data Recommendations (optional)
+    recommended_timeframe: str
+    recommended_lookback_days: int
     
     # Bollinger Bands
     bb_len: int
@@ -49,7 +53,7 @@ class StrategyPreset(TypedDict, total=False):
     rsi_ma_max: int
     use_rsi_relation: bool
     rsi_relation: Literal["<", "<=", ">", ">="]
-    entry_band_mode: Literal["Either", "KC", "BB", "Both"]
+    entry_band_mode: Literal["Either", "KC", "BB", "Both", "Squeeze"]
     trade_direction: Literal["Short", "Long", "Both"]
     
     # Exit Conditions
@@ -82,6 +86,8 @@ DEFAULT_PRESET: StrategyPreset = {
     "name": "Balanced Default (Neutral Blend)",
     "description": "Balanced mean-reversion baseline with mid exits and fixed stops for steadier trade frequency.",
     "category": "balanced",
+    "recommended_timeframe": "1h",
+    "recommended_lookback_days": 365,
 
     # Bollinger Bands
     "bb_len": 20,
@@ -147,6 +153,8 @@ STRATEGY_PRESETS: Dict[str, StrategyPreset] = {
         "name": "Conservative (Strict Entries)",
         "description": "High win rate with tight risk controls. Requires strong signals (both bands + high RSI). Best for capital preservation.",
         "category": "conservative",
+        "recommended_timeframe": "1h",
+        "recommended_lookback_days": 365,
         
         # Indicators (standard)
         "bb_len": 20,
@@ -194,6 +202,8 @@ STRATEGY_PRESETS: Dict[str, StrategyPreset] = {
         "name": "Low Drawdown (Strict Limits)",
         "description": "Minimizes maximum drawdown with conservative entries and strict daily limits. Sacrifices returns for stability.",
         "category": "conservative",
+        "recommended_timeframe": "1h",
+        "recommended_lookback_days": 365,
         
         "bb_len": 20,
         "bb_std": 2.2,  # Wider bands = fewer signals
@@ -241,6 +251,8 @@ STRATEGY_PRESETS: Dict[str, StrategyPreset] = {
         "name": "Aggressive (Loose Filters)",
         "description": "Higher profit factor with larger position sizing and wider stops. More trades, accepts lower win rate for bigger winners.",
         "category": "aggressive",
+        "recommended_timeframe": "30m",
+        "recommended_lookback_days": 180,
         
         "bb_len": 20,
         "bb_std": 2.0,
@@ -284,6 +296,8 @@ STRATEGY_PRESETS: Dict[str, StrategyPreset] = {
         "name": "High Profit Factor (Trailing Focus)",
         "description": "Optimized for maximum profit factor. Uses ATR stops and trailing to let winners run while cutting losers.",
         "category": "aggressive",
+        "recommended_timeframe": "30m",
+        "recommended_lookback_days": 180,
         
         "bb_len": 20,
         "bb_std": 2.0,
@@ -331,6 +345,8 @@ STRATEGY_PRESETS: Dict[str, StrategyPreset] = {
         "name": "Directional Baseline (Short Default)",
         "description": "Baseline mean reversion using overbought/oversold signals. Mirrors the legacy directional setup.",
         "category": "balanced",
+        "recommended_timeframe": "1h",
+        "recommended_lookback_days": 365,
 
         "bb_len": 20,
         "bb_std": 2.0,
@@ -376,6 +392,8 @@ STRATEGY_PRESETS: Dict[str, StrategyPreset] = {
         "name": "Directional Baseline (Long Default)",
         "description": "Baseline mean reversion using oversold/overbought signals with the same risk profile as the short default.",
         "category": "balanced",
+        "recommended_timeframe": "1h",
+        "recommended_lookback_days": 365,
 
         "bb_len": 20,
         "bb_std": 2.0,
@@ -421,6 +439,8 @@ STRATEGY_PRESETS: Dict[str, StrategyPreset] = {
         "name": "Directional Blend (Neutral Bias)",
         "description": "Balanced long/short blend with symmetric RSI thresholds.",
         "category": "balanced",
+        "recommended_timeframe": "1h",
+        "recommended_lookback_days": 365,
 
         "bb_len": 20,
         "bb_std": 2.0,
@@ -466,6 +486,8 @@ STRATEGY_PRESETS: Dict[str, StrategyPreset] = {
         "name": "Directional Blend (Long Bias)",
         "description": "Long bias with looser long thresholds and stricter short thresholds.",
         "category": "balanced",
+        "recommended_timeframe": "1h",
+        "recommended_lookback_days": 365,
 
         "bb_len": 20,
         "bb_std": 2.0,
@@ -511,6 +533,8 @@ STRATEGY_PRESETS: Dict[str, StrategyPreset] = {
         "name": "Directional Blend (Short Bias)",
         "description": "Short bias with looser short thresholds and stricter long thresholds.",
         "category": "balanced",
+        "recommended_timeframe": "1h",
+        "recommended_lookback_days": 365,
 
         "bb_len": 20,
         "bb_std": 2.0,
@@ -555,11 +579,56 @@ STRATEGY_PRESETS: Dict[str, StrategyPreset] = {
     # -------------------------------------------------------------------------
     # SPECIALIZED STRATEGIES - Specific trading styles
     # -------------------------------------------------------------------------
+
+    "squeeze_rsi": {
+        "name": "Squeeze + RSI (EODHD)",
+        "description": "BB inside KC (squeeze) with RSI extremes; mirrors the EODHD example strategy.",
+        "category": "specialized",
+
+        "bb_len": 20,
+        "bb_std": 2.0,
+        "bb_basis_type": "sma",
+        "kc_ema_len": 20,
+        "kc_atr_len": 10,
+        "kc_mult": 2.0,
+        "kc_mid_type": "ema",
+        "rsi_len_30m": 14,
+        "rsi_ma_len": 1,
+        "rsi_smoothing_type": "ema",
+        "rsi_ma_type": "ema",
+
+        "rsi_min": 70,
+        "rsi_ma_min": 70,
+        "use_rsi_relation": False,
+        "rsi_relation": ">=",
+        "entry_band_mode": "Squeeze",
+        "trade_direction": "Both",
+
+        "exit_channel": "BB",
+        "exit_level": "mid",
+
+        "use_stop": True,
+        "stop_mode": "Fixed %",
+        "stop_pct": 2.0,
+        "stop_atr_mult": 2.0,
+        "use_trailing": False,
+        "trail_pct": 1.0,
+        "max_bars_in_trade": 100,
+        "daily_loss_limit": 3.0,
+        "risk_per_trade_pct": 1.0,
+
+        "trade_mode": "Margin / Futures",
+        "max_leverage": 2.0,
+        "maintenance_margin_pct": 0.5,
+        "max_margin_utilization": 70.0,
+    },
     
     "scalping": {
         "name": "Scalping (Fast Reversion)",
         "description": "Quick in-and-out trades targeting small moves. Tight stops, short holding period, exits at mid band. High frequency.",
         "category": "specialized",
+        "recommended_timeframe": "5m",
+        "recommended_lookback_days": 90,
         
         "bb_len": 15,  # Shorter period = more responsive
         "bb_std": 1.8,
@@ -603,6 +672,8 @@ STRATEGY_PRESETS: Dict[str, StrategyPreset] = {
         "name": "Swing Trading (Slow Reversion)",
         "description": "Longer-term trades targeting larger moves. Wider stops, longer holding period, exits at lower band. Fewer but bigger trades.",
         "category": "specialized",
+        "recommended_timeframe": "4h",
+        "recommended_lookback_days": 730,
         
         "bb_len": 25,  # Longer period = smoother
         "bb_std": 2.2,
@@ -646,6 +717,8 @@ STRATEGY_PRESETS: Dict[str, StrategyPreset] = {
         "name": "Momentum Burst (Extreme RSI)",
         "description": "Catches extreme RSI conditions with very high requirements. Fewer trades but high-conviction setups.",
         "category": "specialized",
+        "recommended_timeframe": "15m",
+        "recommended_lookback_days": 180,
         
         "bb_len": 20,
         "bb_std": 2.0,
@@ -689,6 +762,8 @@ STRATEGY_PRESETS: Dict[str, StrategyPreset] = {
         "name": "Mean Reversion Classic",
         "description": "Classic mean reversion setup using standard BB parameters. No trailing stop, relies on price returning to mean.",
         "category": "balanced",
+        "recommended_timeframe": "1h",
+        "recommended_lookback_days": 365,
         
         "bb_len": 20,
         "bb_std": 2.0,

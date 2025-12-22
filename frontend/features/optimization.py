@@ -47,7 +47,7 @@ def create_custom_grid(
         grid["stop_pct"] = stop_values
 
     if include_entry_modes:
-        grid["entry_band_mode"] = ["Either", "KC", "BB", "Both"]
+        grid["entry_band_mode"] = ["Either", "KC", "BB", "Both", "Squeeze"]
 
     if include_exit_levels:
         grid["exit_level"] = ["mid", "lower"]
