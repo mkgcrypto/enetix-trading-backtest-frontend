@@ -14,7 +14,7 @@ class DiscoveredRule:
     avg_return_without: float
     confidence: float
     description: str
-    discovered_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())
+    discovered_at: str = field(default_factory=lambda: datetime.now(datetime.UTC).isoformat())
     rule_id: Optional[int] = None
 
 
