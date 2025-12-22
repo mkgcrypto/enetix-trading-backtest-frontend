@@ -23,6 +23,20 @@ def backend_url() -> str:
     return (os.getenv("BACKEND_URL") or "http://localhost:8000").rstrip("/")
 
 
+def _float_env(name: str, default: float) -> float:
+    raw = os.getenv(name)
+    if raw is None or raw == "":
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        return default
+
+
+def backtest_timeout_seconds() -> float:
+    return _float_env("BACKTEST_TIMEOUT_SECONDS", 60.0)
+
+
 @dataclass(frozen=True)
 class BackendApiClient:
     base_url: str
@@ -86,8 +100,20 @@ class BackendApiClient:
             raise BackendApiError(status=0, message="Invalid patterns refresh response")
         return resp["job"]
 
-    def run_backtest(self, params: dict[str, Any]) -> dict[str, Any]:
-        resp = self.request_json("POST", "/v1/backtest", payload={"params": params})
+    def run_backtest(
+        self,
+        params: dict[str, Any],
+        *,
+        timeout_seconds: Optional[float] = None,
+    ) -> dict[str, Any]:
+        if timeout_seconds is None:
+            timeout_seconds = backtest_timeout_seconds()
+        resp = self.request_json(
+            "POST",
+            "/v1/backtest",
+            payload={"params": params},
+            timeout_seconds=timeout_seconds,
+        )
         if not isinstance(resp, dict) or "stats" not in resp:
             raise BackendApiError(status=0, message="Invalid backtest response")
         return resp
@@ -186,8 +212,12 @@ def enqueue_patterns_refresh(payload: Optional[dict[str, Any]] = None) -> dict[s
     return _default_client().enqueue_patterns_refresh(payload)
 
 
-def run_backtest(params: dict[str, Any]) -> dict[str, Any]:
-    return _default_client().run_backtest(params)
+def run_backtest(
+    params: dict[str, Any],
+    *,
+    timeout_seconds: Optional[float] = None,
+) -> dict[str, Any]:
+    return _default_client().run_backtest(params, timeout_seconds=timeout_seconds)
 
 
 def get_job(job_id: int) -> dict[str, Any]:
