@@ -1,7 +1,8 @@
 import datetime as dt
+import io
 import json
 import os
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import pandas as pd
 from dash import Dash, Input, Output, State, callback_context, dash_table, dcc, html, no_update
@@ -31,10 +32,17 @@ from frontend.features.discovery_helpers import (
 )
 from frontend.features.optimization import ResultConstraints, analyze_results, create_custom_grid
 from frontend.features.patterns import DiscoveredRule, get_rule_summary
-from frontend.features.presets import DEFAULT_PRESET, STRATEGY_PRESETS
+from frontend.features.presets import DEFAULT_PRESET, STRATEGY_PRESETS, apply_preset_direction
 from frontend.ui.dash_helpers import build_backtest_figure, build_empty_figure, build_entry_diagnostics, build_trades_table
 
 CHECK_ON = "on"
+INLINE_OPTION_STYLE = {
+    "display": "inline-flex",
+    "alignItems": "center",
+    "margin": "0 10px 6px 0",
+    "textTransform": "none",
+    "letterSpacing": "normal",
+}
 
 
 def _to_checklist(flag: bool) -> List[str]:
@@ -70,10 +78,61 @@ def _safe_float(value: Any, default: float) -> float:
         return default
 
 
+def _resolve_preset_direction(value: Optional[str]) -> Optional[str]:
+    if value in {"Short", "Long", "Both"}:
+        return value
+    return None
+
+
+def _format_margin_summary(preset: Dict[str, Any]) -> str:
+    if preset.get("trade_mode") != "Margin / Futures":
+        return ""
+    parts = []
+    max_leverage = preset.get("max_leverage")
+    if max_leverage is not None:
+        parts.append(f"max lev {max_leverage:g}x")
+    max_util = preset.get("max_margin_utilization")
+    if max_util is not None:
+        parts.append(f"max util {max_util:g}%")
+    maintenance = preset.get("maintenance_margin_pct")
+    if maintenance is not None:
+        parts.append(f"maint {maintenance:g}%")
+    if not parts:
+        return ""
+    return "Margin: " + ", ".join(parts)
+
+
+def _build_preset_info(preset: Dict[str, Any], direction_override: Optional[str]) -> str:
+    name = preset.get("name", "")
+    description = preset.get("description", "")
+    header = f"{name}: {description}" if description else name
+    info_parts = [header] if header else []
+
+    direction = preset.get("trade_direction")
+    if direction:
+        label = "Direction override" if direction_override else "Direction"
+        info_parts.append(f"{label}: {direction}")
+
+    margin = _format_margin_summary(preset)
+    if margin:
+        info_parts.append(margin)
+
+    return " | ".join(info_parts)
+
+
+def _date_range_from_preset(preset: str, anchor_date: dt.date) -> Optional[Tuple[dt.date, dt.date]]:
+    if preset == "ytd":
+        return dt.date(anchor_date.year, 1, 1), anchor_date
+    days = DATE_PRESET_LOOKBACK_DAYS.get(preset)
+    if not days:
+        return None
+    return anchor_date - dt.timedelta(days=days), anchor_date
+
+
 def _deserialize_df(payload: Optional[str]) -> pd.DataFrame:
     if not payload:
         return pd.DataFrame()
-    return pd.read_json(payload, orient="split")
+    return pd.read_json(io.StringIO(payload), orient="split")
 
 
 def _default_ui_values() -> Dict[str, Any]:
@@ -82,7 +141,7 @@ def _default_ui_values() -> Dict[str, Any]:
         "w_symbol": "BTC/USD",
         "w_timeframe": "30m",
         "w_start_date": dt.date(2022, 1, 1),
-        "w_end_date": dt.datetime.utcnow().date(),
+        "w_end_date": dt.datetime.now(dt.UTC).date(),
         "w_cash": 10_000,
         "w_commission": 0.001,
         "w_bb_len": DEFAULT_PRESET.get("bb_len", 20),
@@ -248,7 +307,27 @@ DEFAULTS = _default_ui_values()
 BACKTEST_CACHE: Dict[tuple, Dict[str, Any]] = {}
 
 EXCHANGE_OPTIONS = ["coinbase", "kraken", "gemini", "bitstamp", "binanceus"]
-TIMEFRAME_OPTIONS = ["30m", "1h", "4h", "1d"]
+TIMEFRAME_OPTIONS = [
+    "1m", "3m", "5m", "15m", "30m",
+    "1h", "2h", "4h", "6h", "12h",
+    "1d", "3d", "1w",
+]
+DATE_PRESET_LOOKBACK_DAYS = {
+    "last_30d": 30,
+    "last_90d": 90,
+    "last_180d": 180,
+    "last_1y": 365,
+    "last_2y": 730,
+}
+DATE_PRESET_OPTIONS = [
+    {"label": "Manual", "value": "manual"},
+    {"label": "30D", "value": "last_30d"},
+    {"label": "90D", "value": "last_90d"},
+    {"label": "180D", "value": "last_180d"},
+    {"label": "1Y", "value": "last_1y"},
+    {"label": "2Y", "value": "last_2y"},
+    {"label": "YTD", "value": "ytd"},
+]
 BB_BASIS_OPTIONS = ["sma", "ema"]
 RSI_SMOOTHING_OPTIONS = ["ema", "sma", "rma"]
 RSI_MA_OPTIONS = ["sma", "ema"]
@@ -267,6 +346,13 @@ STOP_MODE_OPTIONS = ["Fixed %", "ATR"]
 PRESET_OPTIONS = ["Custom"] + list(STRATEGY_PRESETS.keys())
 PRESET_LABELS = ["Custom (Manual Configuration)"] + [
     STRATEGY_PRESETS[key]["name"] for key in STRATEGY_PRESETS.keys()
+]
+PRESET_DIRECTION_DEFAULT = "Preset"
+PRESET_DIRECTION_OPTIONS = [
+    {"label": "Use preset direction", "value": "Preset"},
+    {"label": "Short only", "value": "Short"},
+    {"label": "Long only", "value": "Long"},
+    {"label": "Long + Short (Blend)", "value": "Both"},
 ]
 
 app = Dash(__name__)
@@ -293,7 +379,6 @@ app.layout = html.Div(
         dcc.Store(id="store-job-selected"),
         dcc.Store(id="store-job-detail"),
         dcc.Store(id="store-job-events"),
-        dcc.Store(id="store-theme", storage_type="local", data="light"),
         dcc.Interval(id="backend-poll", interval=1000, n_intervals=0),
         dcc.Download(id="download-diagnostics"),
         dcc.Download(id="download-optimization"),
@@ -310,6 +395,8 @@ app.layout = html.Div(
                             id="theme-toggle",
                             options=[{"label": "Dark mode", "value": CHECK_ON}],
                             value=[],
+                            persistence=True,
+                            persistence_type="local",
                             className="theme-toggle",
                         ),
                     ],
@@ -339,6 +426,13 @@ app.layout = html.Div(
                             value="Custom",
                             clearable=False,
                         ),
+                        html.Label("Preset direction"),
+                        dcc.Dropdown(
+                            id="preset_direction",
+                            options=PRESET_DIRECTION_OPTIONS,
+                            value=PRESET_DIRECTION_DEFAULT,
+                            clearable=False,
+                        ),
                         html.Div(id="preset-info", style={"marginTop": "6px", "fontSize": "12px"}),
                         html.Hr(),
                         html.Details(
@@ -358,11 +452,18 @@ app.layout = html.Div(
                                     value=DEFAULTS["w_symbol"],
                                 ),
                                 html.Label("Timeframe"),
-                                dcc.Dropdown(
+                                dcc.RadioItems(
                                     id="w_timeframe",
                                     options=[{"label": t, "value": t} for t in TIMEFRAME_OPTIONS],
                                     value=DEFAULTS["w_timeframe"],
-                                    clearable=False,
+                                    labelStyle=INLINE_OPTION_STYLE,
+                                ),
+                                html.Label("Date presets"),
+                                dcc.RadioItems(
+                                    id="w_date_preset",
+                                    options=DATE_PRESET_OPTIONS,
+                                    value="manual",
+                                    labelStyle=INLINE_OPTION_STYLE,
                                 ),
                                 html.Label("Date range (UTC)"),
                                 dcc.DatePickerRange(
@@ -1123,53 +1224,34 @@ def _values_from_args(values: List[Any]) -> Dict[str, Any]:
     return {field["key"]: value for field, value in zip(INPUT_FIELDS, values)}
 
 
-@app.callback(
-    Output("store-theme", "data"),
-    Input("theme-toggle", "value"),
-    State("store-theme", "data"),
-    prevent_initial_call=True,
-)
-def update_theme_store(toggle_value, stored_theme):
-    theme = "dark" if _from_checklist(toggle_value) else "light"
-    if stored_theme == theme:
-        raise PreventUpdate
-    return theme
-
-
-@app.callback(
-    Output("theme-toggle", "value"),
-    Input("store-theme", "data"),
-)
-def sync_theme_toggle(stored_theme):
-    return [CHECK_ON] if stored_theme == "dark" else []
-
-
 app.clientside_callback(
     """
-    function(theme) {
-        var selected = theme === "dark" ? "dark" : "light";
+    function(toggleValue) {
+        var isDark = Array.isArray(toggleValue) && toggleValue.indexOf("on") !== -1;
+        var selected = isDark ? "dark" : "light";
         document.documentElement.setAttribute("data-theme", selected);
         return "";
     }
     """,
     Output("theme-sink", "children"),
-    Input("store-theme", "data"),
+    Input("theme-toggle", "value"),
 )
 
 
 @app.callback(
     [Output(field["id"], field["prop"]) for field in INPUT_FIELDS]
     + [Output("preset-info", "children"), Output("preset_selector", "value")],
-    [Input("preset_selector", "value"), Input("store-load-strategy", "data")],
+    [Input("preset_selector", "value"), Input("store-load-strategy", "data"), Input("preset_direction", "value")],
     prevent_initial_call=True,
 )
-def sync_inputs_from_preset(preset_value, loaded_strategy):
+def sync_inputs_from_preset(preset_value, loaded_strategy, preset_direction):
     if not callback_context.triggered:
         raise PreventUpdate
 
     trigger_id = callback_context.triggered[0]["prop_id"].split(".")[0]
     if trigger_id == "store-load-strategy" and loaded_strategy:
-        ui_values = _preset_to_ui_values(loaded_strategy)
+        resolved = apply_preset_direction(loaded_strategy)
+        ui_values = _preset_to_ui_values(resolved)
         output_values = [ui_values.get(field["key"]) for field in INPUT_FIELDS]
         info = "Loaded strategy parameters."
         return output_values + [info, "Custom"]
@@ -1182,10 +1264,34 @@ def sync_inputs_from_preset(preset_value, loaded_strategy):
     if not preset:
         return [no_update] * len(INPUT_FIELDS) + [no_update, no_update]
 
-    ui_values = _preset_to_ui_values(preset)
+    direction_override = _resolve_preset_direction(preset_direction)
+    resolved = apply_preset_direction(preset, direction_override)
+    ui_values = _preset_to_ui_values(resolved)
     output_values = [ui_values.get(field["key"]) for field in INPUT_FIELDS]
-    info = f"{preset.get('name')}: {preset.get('description')}"
+    info = _build_preset_info(resolved, direction_override)
     return output_values + [info, preset_value]
+
+
+@app.callback(
+    [
+        Output("w_date_range", "start_date", allow_duplicate=True),
+        Output("w_date_range", "end_date", allow_duplicate=True),
+    ],
+    Input("w_date_preset", "value"),
+    State("w_date_range", "end_date"),
+    prevent_initial_call=True,
+)
+def apply_date_preset(preset_value, current_end):
+    if not preset_value or preset_value == "manual":
+        raise PreventUpdate
+
+    anchor_date = _parse_date(current_end) or dt.datetime.now(dt.UTC).date()
+    resolved = _date_range_from_preset(preset_value, anchor_date)
+    if not resolved:
+        raise PreventUpdate
+
+    start_date, end_date = resolved
+    return start_date, end_date
 
 
 @app.callback(
@@ -1254,12 +1360,12 @@ def update_params_state(*args):
         Input("show_candles", "value"),
         Input("lock_rsi_y", "value"),
         Input("store-selected-trade", "data"),
-        Input("store-theme", "data"),
+        Input("theme-toggle", "value"),
     ],
 )
-def update_dashboard(results, show_candles, lock_rsi_y, selected_trade, theme):
+def update_dashboard(results, show_candles, lock_rsi_y, selected_trade, theme_toggle):
     print(f"[DASHBOARD] update_dashboard called, results: {type(results)}, has_data: {bool(results)}")
-    theme_value = theme or "light"
+    theme_value = "dark" if _from_checklist(theme_toggle) else "light"
     if not results:
         return "Run a backtest to see results.", [], build_empty_figure(theme_value)
     if isinstance(results, dict) and results.get("error"):
@@ -1612,7 +1718,7 @@ def render_opt_results(opt_payload, wf_payload):
     wf_summary = ""
 
     if opt_payload:
-        df = pd.read_json(opt_payload, orient="split")
+        df = _deserialize_df(opt_payload)
         opt_data = df.to_dict("records")
         opt_columns = [{"name": c, "id": c} for c in df.columns]
         analysis = analyze_results(df)
@@ -1627,7 +1733,7 @@ def render_opt_results(opt_payload, wf_payload):
             ])
 
     if wf_payload:
-        df = pd.read_json(wf_payload.get("results"), orient="split")
+        df = _deserialize_df(wf_payload.get("results"))
         wf_data = df.to_dict("records")
         wf_columns = [{"name": c, "id": c} for c in df.columns]
         summary = wf_payload.get("summary", {})
@@ -1651,7 +1757,7 @@ def render_opt_results(opt_payload, wf_payload):
 def download_opt_results(n_clicks, payload):
     if not n_clicks or not payload:
         raise PreventUpdate
-    df = pd.read_json(payload, orient="split")
+    df = _deserialize_df(payload)
     return dcc.send_data_frame(df.to_csv, "optimization_results.csv", index=False)
 
 
@@ -1664,7 +1770,7 @@ def download_opt_results(n_clicks, payload):
 def download_wf_results(n_clicks, payload):
     if not n_clicks or not payload:
         raise PreventUpdate
-    df = pd.read_json(payload.get("results"), orient="split")
+    df = _deserialize_df(payload.get("results"))
     return dcc.send_data_frame(df.to_csv, "walk_forward_results.csv", index=False)
 
 
@@ -2145,7 +2251,7 @@ def render_patterns(tab_value, rules_payload):
                     avg_return_without=float(r.get("avg_return_without") or 0),
                     confidence=float(r.get("confidence") or 0),
                     description=r.get("description", ""),
-                    discovered_at=r.get("discovered_at") or dt.datetime.utcnow().isoformat(),
+                    discovered_at=r.get("discovered_at") or dt.datetime.now(dt.UTC).isoformat(),
                 )
             )
         except Exception:
