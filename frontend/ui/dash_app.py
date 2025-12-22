@@ -110,7 +110,7 @@ def _build_preset_info(preset: Dict[str, Any], direction_override: Optional[str]
 
     direction = preset.get("trade_direction")
     if direction:
-        label = "Direction override" if direction_override else "Direction"
+        label = "Direction override" if direction_override else "Default direction"
         info_parts.append(f"{label}: {direction}")
 
     margin = _format_margin_summary(preset)
@@ -129,6 +129,15 @@ def _date_range_from_preset(preset: str, anchor_date: dt.date) -> Optional[Tuple
     return anchor_date - dt.timedelta(days=days), anchor_date
 
 
+def _preset_key_for_lookback(days: Optional[int]) -> Optional[str]:
+    if not days:
+        return None
+    for key, value in DATE_PRESET_LOOKBACK_DAYS.items():
+        if int(value) == int(days):
+            return key
+    return None
+
+
 def _deserialize_df(payload: Optional[str]) -> pd.DataFrame:
     if not payload:
         return pd.DataFrame()
@@ -142,6 +151,7 @@ def _default_ui_values() -> Dict[str, Any]:
         "w_timeframe": "30m",
         "w_start_date": dt.date(2022, 1, 1),
         "w_end_date": dt.datetime.now(dt.UTC).date(),
+        "w_date_preset": "manual",
         "w_cash": 10_000,
         "w_commission": 0.001,
         "w_bb_len": DEFAULT_PRESET.get("bb_len", 20),
@@ -320,7 +330,7 @@ DATE_PRESET_LOOKBACK_DAYS = {
     "last_2y": 730,
 }
 DATE_PRESET_OPTIONS = [
-    {"label": "Manual", "value": "manual"},
+    {"label": "Custom", "value": "manual"},
     {"label": "30D", "value": "last_30d"},
     {"label": "90D", "value": "last_90d"},
     {"label": "180D", "value": "last_180d"},
@@ -328,6 +338,14 @@ DATE_PRESET_OPTIONS = [
     {"label": "2Y", "value": "last_2y"},
     {"label": "YTD", "value": "ytd"},
 ]
+DATE_PRESET_LABELS = {
+    "last_30d": "30D",
+    "last_90d": "90D",
+    "last_180d": "180D",
+    "last_1y": "1Y",
+    "last_2y": "2Y",
+    "ytd": "YTD",
+}
 BB_BASIS_OPTIONS = ["sma", "ema"]
 RSI_SMOOTHING_OPTIONS = ["ema", "sma", "rma"]
 RSI_MA_OPTIONS = ["sma", "ema"]
