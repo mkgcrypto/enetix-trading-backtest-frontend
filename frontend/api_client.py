@@ -20,7 +20,12 @@ class BackendApiError(Exception):
 
 
 def backend_url() -> str:
-    return (os.getenv("BACKEND_URL") or "http://localhost:8000").rstrip("/")
+    url = (os.getenv("BACKEND_URL") or "http://localhost:8000").rstrip("/")
+    # Log on first call to help debug connectivity issues
+    if not getattr(backend_url, "_logged", False):
+        print(f"[API_CLIENT] Using BACKEND_URL: {url}")
+        backend_url._logged = True
+    return url
 
 
 def _float_env(name: str, default: float) -> float:
@@ -60,9 +65,12 @@ class BackendApiClient:
         req = Request(url, data=data, headers=headers, method=method.upper())
         timeout = self.timeout_seconds if timeout_seconds is None else float(timeout_seconds)
 
+        print(f"[API_CLIENT] {method.upper()} {url} (timeout={timeout}s)")
+
         try:
             with urlopen(req, timeout=timeout) as resp:
                 raw = resp.read()
+                print(f"[API_CLIENT] {method.upper()} {path} -> {resp.status}")
                 if not raw:
                     return None
                 return json.loads(raw.decode("utf-8"))
@@ -72,9 +80,14 @@ class BackendApiClient:
                 body = e.read().decode("utf-8")
             except Exception:
                 body = None
+            print(f"[API_CLIENT] {method.upper()} {path} -> HTTP {e.code}: {e.reason}")
             raise BackendApiError(status=int(e.code), message=str(e.reason), body=body) from e
         except URLError as e:
+            print(f"[API_CLIENT] {method.upper()} {path} -> URL Error: {e.reason}")
             raise BackendApiError(status=0, message=str(e.reason)) from e
+        except Exception as e:
+            print(f"[API_CLIENT] {method.upper()} {path} -> Exception: {type(e).__name__}: {e}")
+            raise
 
     def enqueue_optimize(self, payload: dict[str, Any]) -> dict[str, Any]:
         resp = self.request_json("POST", "/v1/optimize", payload=payload)
