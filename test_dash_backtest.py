@@ -3,24 +3,20 @@
 Test script to verify the Dash backtest functionality works correctly.
 """
 import datetime as dt
-from typing import Optional
 from unittest.mock import patch
 
-IMPORT_ERROR: Optional[Exception] = None
+import pytest
 
-try:
-    import pandas as pd
+pd = pytest.importorskip("pandas")
+pytest.importorskip("dash")
 
-    from frontend.ui.dash_app import (
-        _default_ui_values,
-        _build_params,
-        run_backtest_callback,
-        update_dashboard,
-        update_trades,
-    )
-except Exception as exc:  # pragma: no cover
-    pd = None  # type: ignore[assignment]
-    IMPORT_ERROR = exc
+from frontend.ui.dash_app import (
+    _default_ui_values,
+    _build_params,
+    run_backtest_callback,
+    update_dashboard,
+    update_trades,
+)
 
 
 def _build_dummy_results(params):
@@ -75,10 +71,21 @@ def _build_dummy_results(params):
     }
 
 
+@pytest.fixture()
+def params():
+    defaults = _default_ui_values()
+    defaults["w_start_date"] = dt.date.today() - dt.timedelta(days=30)
+    defaults["w_end_date"] = dt.date.today()
+    return _build_params(defaults)
+
+
+@pytest.fixture()
+def results(params):
+    return _build_dummy_results(params)
+
+
 def test_params_initialization():
     """Test that default params are built correctly."""
-    if IMPORT_ERROR:
-        raise RuntimeError(f"Missing optional dependencies: {IMPORT_ERROR}")
     defaults = _default_ui_values()
     params = _build_params(defaults)
 
@@ -88,40 +95,23 @@ def test_params_initialization():
     assert "symbol" in params, "Params should have symbol"
     assert "timeframe" in params, "Params should have timeframe"
 
-    return params
 
-
-def test_backtest_callback():
+def test_backtest_callback(params, results):
     """Test the backtest callback with a mocked API response."""
-    if IMPORT_ERROR:
-        raise RuntimeError(f"Missing optional dependencies: {IMPORT_ERROR}")
+    with patch("frontend.ui.dash_app.run_backtest", return_value=results):
+        run_results, last_params, dirty, selected_trade, status = run_backtest_callback(1, params)
 
-    defaults = _default_ui_values()
-    defaults["w_start_date"] = dt.date.today() - dt.timedelta(days=30)
-    defaults["w_end_date"] = dt.date.today()
-
-    params = _build_params(defaults)
-    dummy_results = _build_dummy_results(params)
-
-    with patch("frontend.ui.dash_app.run_backtest", return_value=dummy_results):
-        results, last_params, dirty, selected_trade, status = run_backtest_callback(1, params)
-
-    assert results is not None, "Results should not be None"
-    assert not isinstance(results, dict) or not results.get("error"), "Backtest should succeed"
+    assert run_results is not None, "Results should not be None"
+    assert not isinstance(run_results, dict) or not run_results.get("error"), "Backtest should succeed"
     assert status
     assert last_params == params
     assert dirty is False
     assert selected_trade is None
 
-    return results
-
 
 def test_dashboard_update(results):
     """Test that dashboard updates correctly with results."""
-    if IMPORT_ERROR:
-        raise RuntimeError(f"Missing optional dependencies: {IMPORT_ERROR}")
-
-    message, metrics, figure = update_dashboard(results, ["on"], ["on"], None)
+    message, metrics, figure = update_dashboard(results, ["on"], ["on"], None, ["on"])
 
     assert message == "" or isinstance(message, str), "Message should be empty or string"
     assert isinstance(metrics, list), "Metrics should be a list"
@@ -130,9 +120,6 @@ def test_dashboard_update(results):
 
 def test_trades_update(results):
     """Test that trades table updates correctly."""
-    if IMPORT_ERROR:
-        raise RuntimeError(f"Missing optional dependencies: {IMPORT_ERROR}")
-
     (trades_msg, trades_data, trades_cols,
      diag_msg, diag_data, diag_cols) = update_trades(results)
 
@@ -142,14 +129,3 @@ def test_trades_update(results):
     assert isinstance(diag_cols, list)
     assert isinstance(trades_msg, str)
     assert isinstance(diag_msg, str)
-
-
-if __name__ == "__main__":
-    if IMPORT_ERROR:
-        print(f"\n- SKIPPED (missing optional deps): {IMPORT_ERROR}")
-    else:
-        params = test_params_initialization()
-        results = test_backtest_callback()
-        test_dashboard_update(results)
-        test_trades_update(results)
-        print("\n✓ Dash backtest smoke tests passed")
