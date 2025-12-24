@@ -26,6 +26,13 @@ from frontend.ui.dash_constants import (
 )
 from frontend.ui.dash_utils import _to_checklist
 
+POLLING_LOADING_PROPS = {
+    "delay_show": 350,
+    "delay_hide": 150,
+    "overlay_style": {"visibility": "visible"},
+    "show_initially": False,
+}
+
 
 def build_layout(defaults: Dict[str, Any], default_params: Dict[str, Any]) -> html.Div:
     return html.Div(
@@ -539,6 +546,7 @@ def build_layout(defaults: Dict[str, Any], default_params: Dict[str, Any]) -> ht
                                                                 id="loading-optimization",
                                                                 type="default",
                                                                 children=html.Div(id="opt-status", style={"margin": "8px 0"}),
+                                                                **POLLING_LOADING_PROPS,
                                                             ),
                                                             html.H4("Top Configurations"),
                                                             dash_table.DataTable(
@@ -686,6 +694,7 @@ def build_layout(defaults: Dict[str, Any], default_params: Dict[str, Any]) -> ht
                                                                 id="loading-discovery",
                                                                 type="default",
                                                                 children=html.Div(id="disc-status", style={"margin": "8px 0"}),
+                                                                **POLLING_LOADING_PROPS,
                                                             ),
                                                             html.Div(id="disc-results", style={"margin": "8px 0"}),
                                                         ],
@@ -726,6 +735,7 @@ def build_layout(defaults: Dict[str, Any], default_params: Dict[str, Any]) -> ht
                                                                 id="loading-leaderboard",
                                                                 type="default",
                                                                 children=html.Div(id="lb-status", style={"margin": "8px 0"}),
+                                                                **POLLING_LOADING_PROPS,
                                                             ),
                                                             html.Div(id="lb-updated", style={"margin": "8px 0", "fontSize": "12px"}),
                                                             dcc.Loading(
@@ -760,6 +770,7 @@ def build_layout(defaults: Dict[str, Any], default_params: Dict[str, Any]) -> ht
                                                                 id="loading-patterns",
                                                                 type="default",
                                                                 children=html.Div(id="patterns-status", style={"margin": "8px 0"}),
+                                                                **POLLING_LOADING_PROPS,
                                                             ),
                                                             dcc.Loading(
                                                                 id="loading-patterns-summary",
@@ -833,6 +844,7 @@ def build_layout(defaults: Dict[str, Any], default_params: Dict[str, Any]) -> ht
                                                                 id="loading-jobs-status",
                                                                 type="default",
                                                                 children=html.Div(id="jobs-status", style={"margin": "8px 0"}),
+                                                                **POLLING_LOADING_PROPS,
                                                             ),
                                                             html.H5("Workers"),
                                                             html.Div(id="workers-summary", style={"margin": "8px 0"}),
@@ -859,6 +871,7 @@ def build_layout(defaults: Dict[str, Any], default_params: Dict[str, Any]) -> ht
                                                                         style_table={"overflowX": "auto"},
                                                                     ),
                                                                 ]),
+                                                                **POLLING_LOADING_PROPS,
                                                             ),
                                                             html.Hr(),
                                                             html.Div(
@@ -891,6 +904,7 @@ def build_layout(defaults: Dict[str, Any], default_params: Dict[str, Any]) -> ht
                                                                         style_table={"overflowX": "auto", "maxHeight": "260px", "overflowY": "auto"},
                                                                     ),
                                                                 ]),
+                                                                **POLLING_LOADING_PROPS,
                                                             ),
                                                         ],
                                                     ),
