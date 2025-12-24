@@ -10,13 +10,8 @@ import pytest
 pd = pytest.importorskip("pandas")
 pytest.importorskip("dash")
 
-from frontend.ui.dash_app import (
-    _default_ui_values,
-    _build_params,
-    run_backtest_callback,
-    update_dashboard,
-    update_trades,
-)
+from frontend.ui.dash_app import run_backtest_callback, update_dashboard, update_trades
+from frontend.ui.dash_state import _build_params, _default_ui_values
 
 
 def _build_dummy_results(params):
