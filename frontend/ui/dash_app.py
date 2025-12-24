@@ -47,11 +47,22 @@ INLINE_OPTION_STYLE = {
 }
 
 
+class _DashRequestFilter(logging.Filter):
+    def __init__(self, *, blocked_paths: tuple[str, ...]) -> None:
+        super().__init__()
+        self._blocked_paths = blocked_paths
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        message = record.getMessage()
+        return not any(path in message for path in self._blocked_paths)
+
+
 def _configure_logging() -> None:
     logger = logging.getLogger("werkzeug")
     logger.setLevel(logging.INFO)
     handler = logging.StreamHandler(sys.stdout)
     handler.setFormatter(logging.Formatter("%(message)s"))
+    handler.addFilter(_DashRequestFilter(blocked_paths=("/_dash-update-component",)))
     logger.handlers = [handler]
     logger.propagate = False
 

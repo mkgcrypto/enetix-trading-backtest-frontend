@@ -70,7 +70,13 @@ class BackendApiClient:
         try:
             with urlopen(req, timeout=timeout) as resp:
                 raw = resp.read()
-                print(f"[API_CLIENT] {method.upper()} {path} -> {resp.status}")
+                status = getattr(resp, "status", None)
+                if status is None:
+                    try:
+                        status = resp.getcode()
+                    except Exception:
+                        status = None
+                print(f"[API_CLIENT] {method.upper()} {path} -> {status or 'ok'}")
                 if not raw:
                     return None
                 return json.loads(raw.decode("utf-8"))
